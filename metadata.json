@@ -1,0 +1,9 @@
+{
+  "name": "Social Connect",
+  "description": "A social media application",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}

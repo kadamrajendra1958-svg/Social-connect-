@@ -1,0 +1,109 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+
+    // Users Collection
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'handle', 'followers', 'following', 'createdAt'])
+        && data.size() >= 5
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.handle is string && data.handle.size() > 0 && data.handle.size() <= 50
+        && data.followers is number
+        && data.following is number
+        && data.createdAt == request.time
+        && data.get('avatar', '') is string
+        && data.get('bio', '') is string
+        && data.get('coverImage', '') is string
+        && data.get('email', '') is string
+        && data.get('updatedAt', request.time) == request.time;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
+      allow update: if isSignedIn() && request.auth.uid == userId 
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'handle', 'avatar', 'bio', 'coverImage', 'followers', 'following', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+    }
+
+    // Posts Collection
+    function isValidPost(data) {
+      return data.keys().hasAll(['authorId', 'content', 'likesCount', 'commentsCount', 'sharesCount', 'createdAt'])
+        && data.authorId == request.auth.uid
+        && data.content is string && data.content.size() <= 5000
+        && data.likesCount is number && data.likesCount == 0
+        && data.commentsCount is number && data.commentsCount == 0
+        && data.sharesCount is number && data.sharesCount == 0
+        && data.createdAt == request.time
+        && data.get('image', '') is string
+        && data.get('updatedAt', request.time) == request.time;
+    }
+
+    match /posts/{postId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(postId) && isValidPost(incoming());
+      allow update: if isSignedIn() 
+        && (
+          (request.auth.uid == existing().authorId && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'image', 'updatedAt']) && incoming().updatedAt == request.time) ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'sharesCount']))
+        );
+      allow delete: if isSignedIn() && request.auth.uid == existing().authorId;
+
+      // Post Likes
+      match /likes/{userId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.auth.uid == userId
+          && incoming().keys().hasAll(['createdAt'])
+          && incoming().createdAt == request.time;
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      // Post Comments
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isValidId(commentId)
+          && incoming().keys().hasAll(['authorId', 'content', 'createdAt'])
+          && incoming().authorId == request.auth.uid
+          && incoming().content is string && incoming().content.size() > 0 && incoming().content.size() <= 1000
+          && incoming().createdAt == request.time;
+        allow delete: if isSignedIn() && request.auth.uid == existing().authorId;
+      }
+    }
+
+    // Follows Collection
+    match /follows/{followId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(followId)
+        && incoming().keys().hasAll(['followerId', 'followingId', 'createdAt'])
+        && incoming().followerId == request.auth.uid
+        && incoming().followingId is string
+        && incoming().createdAt == request.time;
+      allow delete: if isSignedIn() && request.auth.uid == existing().followerId;
+    }
+
+    // Notifications Collection
+    match /users/{userId}/notifications/{notificationId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && isValidId(notificationId)
+        && incoming().keys().hasAll(['actorId', 'type', 'isRead', 'createdAt'])
+        && incoming().actorId == request.auth.uid
+        && incoming().type in ['like', 'comment', 'follow', 'mention']
+        && incoming().isRead == false
+        && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && request.auth.uid == userId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+  }
+}
